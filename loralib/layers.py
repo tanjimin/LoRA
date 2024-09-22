@@ -301,6 +301,44 @@ class Conv2d(ConvLoRA):
 class Conv1d(ConvLoRA):
     def __init__(self, *args, **kwargs):
         super(Conv1d, self).__init__(nn.Conv1d, *args, **kwargs)
+        out_channels, kernel_size, r = args[1], args[2], kwargs['r']
+        self.lora_B = nn.Parameter(
+              self.conv.weight.new_zeros((out_channels, r*kernel_size))
+            )
+        self.reset_parameters()
+        self.merged = False
+
+class ConvTranspose1d(ConvLoRA):
+    def __init__(self, *args, **kwargs):
+        super(ConvTranspose1d, self).__init__(nn.ConvTranspose1d, *args, **kwargs)
+        in_channels, out_channels, kernel_size, r = args[0], args[1], args[2], kwargs['r']
+        if r > 0:
+            self.lora_A = nn.Parameter(
+                self.conv.weight.new_zeros((r * kernel_size, out_channels * kernel_size))
+            )
+            self.lora_B = nn.Parameter(
+              self.conv.weight.new_zeros((in_channels, r*kernel_size))
+            )
+        self.reset_parameters()
+        self.merged = False
+
+    def forward(self, x, output_size = None):
+        if self.r > 0 and not self.merged:
+            assert isinstance(self.conv.padding, tuple)
+            num_spatial_dims = 1
+            output_padding = self.conv._output_padding(
+                x, output_size, self.conv.stride, self.conv.padding, self.conv.kernel_size,  
+                num_spatial_dims, self.conv.dilation) 
+            return F.conv_transpose1d(
+                x, 
+                self.conv.weight + (self.lora_B @ self.lora_A).view(self.conv.weight.shape) * self.scaling,
+                self.conv.bias, 
+                self.conv.stride, 
+                self.conv.padding,
+                output_padding, 
+                self.conv.groups, 
+                self.conv.dilation)
+        return self.conv(x)
 
 # Can Extend to other ones like this
 
